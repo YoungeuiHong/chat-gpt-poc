@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { ChatCompletionTool } from "openai/src/resources/chat/completions";
 import { ChatCompletionMessageParam } from "openai/resources";
 import Dictaphone from "@/components/Dictaphone";
+import findAvailableTrain from "@/util/findAvailableTrain";
+import { PlaceIdMap } from "@/util/PlaceIdMap";
+import axios from "axios";
 
 interface Train {
   trainNumber: string;
@@ -45,6 +48,8 @@ export default function Home() {
   const [departure, setDeparture] = useState<string>("");
   // 도착지
   const [destination, setDestination] = useState<string>("");
+  // 출발 날짜
+  const [departureDate, setDepartureDate] = useState<string>("");
   // 열차 번호
   const [trainNumber, setTrainNumber] = useState<string>("");
   // SpeechSynthesis
@@ -83,14 +88,12 @@ export default function Home() {
               type: "string",
               description: "도착지 (Destination)",
             },
-            departureTime: {
+            departureDate: {
               type: "string",
-              // TODO: Chat GPT가 오늘 날짜를 제대로 파악하지 못하는 것 같음.
-              description:
-                "출발 시간. 날짜는 오늘 날짜로 하고, JavaScript의 Date 객체 생성 파라미터로 넣을 수 있는 형태의 string으로 주세요.",
+              description: "출발 날짜 (format: yyyyMMdd)",
             },
           },
-          required: ["departure", "destination", "departureTime"],
+          required: ["departure", "destination"],
         },
       },
     },
@@ -99,20 +102,27 @@ export default function Home() {
       function: {
         name: "reserveTrain",
         description:
-          "user가 예매하고 싶은 열차의 번호를 말하면 예매해주는 함수",
+          "기차의 출발지와 도착지를 아는 상태에서, user가 예매하고 싶은 열차의 출발 시간을 말하면 열차를 예약해주는 함수",
         parameters: {
           type: "object",
           properties: {
-            train: {
+            departureTime: {
               type: "string",
-              description: "예매하려고 하는 열차의 번호",
+              description: "열차의 출발 시간 (format: HHmmss)",
             },
           },
-          required: ["train"],
         },
+        required: ["departureTime"],
       },
     },
   ];
+
+  function formatDate(date: Date) {
+    let year = date.getFullYear();
+    let month = (date.getMonth() + 1).toString().padStart(2, "0"); // 월은 0부터 시작하므로 +1 해줌
+    let day = date.getDate().toString().padStart(2, "0");
+    return `${year}${month}${day}`;
+  }
 
   // Chat GPT에게 질문하는 함수
   async function askChatGpt() {
@@ -140,7 +150,7 @@ export default function Home() {
       for (const toolCall of responseMessage.tool_calls) {
         if (toolCall.function.name === "findAvailableTrains") {
           const parsed = JSON.parse(toolCall.function.arguments);
-          const result = findAvailableTrains(
+          const result = await findAvailableTrains(
             parsed.departure,
             parsed.destination,
             parsed.departureTime,
@@ -162,7 +172,7 @@ export default function Home() {
           setAnswer(response2?.choices[0]?.message?.content);
         } else if (toolCall.function.name === "reserveTrain") {
           const parsed = JSON.parse(toolCall.function.arguments);
-          const result = reserveTrain(parsed);
+          const result = await reserveTrain(parsed);
 
           messages.push({
             tool_call_id: toolCall.id,
@@ -184,35 +194,40 @@ export default function Home() {
   }
 
   // 예매 가능한 열차를 찾는 함수
-  function findAvailableTrains(
+  async function findAvailableTrains(
     departureCity: string,
     destinationCity: string,
-    departureTime: string,
-  ): Train[] {
-    const availableTrains: Train[] = [];
+    departureDate: string = formatDate(new Date()),
+  ) {
+    const depPlaceId = PlaceIdMap.get(departureCity);
+    const arrPlaceId = PlaceIdMap.get(destinationCity);
 
     setDeparture(departureCity);
     setDestination(destinationCity);
+    setDepartureDate(departureDate);
 
-    const departureDate = new Date(departureTime);
-    for (const train of trainsDatabase) {
-      if (
-        train.departureCity === departureCity &&
-        train.destinationCity === destinationCity &&
-        train.departureTime.getTime() > departureDate.getTime()
-      ) {
-        availableTrains.push(train);
-      }
+    if (depPlaceId && arrPlaceId) {
+      const res = await findAvailableTrain(
+        depPlaceId,
+        arrPlaceId,
+        departureDate,
+      );
+      return res.data.response.body.items.item;
+    } else {
+      return "해당되는 역이 없습니다.";
     }
-
-    return availableTrains;
   }
 
   // 열차를 예매해주는 함수
-  function reserveTrain(train: any) {
-    console.log("예약하려는 기차: ", train);
-    setTrainNumber(train.train);
-    return "예약 성공";
+  async function reserveTrain(arg: any) {
+    const train = {
+      departure: departure,
+      destination: destination,
+      date: departureDate,
+      time: arg.departureTime,
+    };
+    const res = await axios.post("/api/reservation", train);
+    return res;
   }
 
   // Chat GPT의 응답을 음성으로 출력해주는 함수
@@ -237,12 +252,6 @@ export default function Home() {
       askChatGpt();
     }
   }, [isSpeaking]);
-
-  useEffect(() => {
-    if (answer && !isSpeaking) {
-      playMessage();
-    }
-  }, [answer]);
 
   const handleTranscriptChange = (newTranscript: string) => {
     setTranscript(newTranscript);
