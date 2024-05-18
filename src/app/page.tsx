@@ -59,7 +59,7 @@ export default function Home() {
     {
       role: "system",
       content:
-        "민수는 기차역에서 근무하는 직원이야. 할아버지, 할머니께서 모르시는 걸 친절히 알려드려야 해.",
+        "민수는 기차역에서 근무하는 직원이야. 할아버지, 할머니께서 모르시는 걸 친절히 알려드려야 해. 답변은 되도록이면 짧게 해주고, 한국어로 해줘. 그리고 마치 창구 직원인 것처럼 자연스러운 대화체로 대답해줘.",
     },
   ]);
 
@@ -253,6 +253,47 @@ export default function Home() {
     }
   }, [isSpeaking]);
 
+  // Text-to-Speech 기능을 활용해서 Chat GPT의 응답을 음성으로 재생
+  useEffect(() => {
+    async function streamResponse() {
+      if (answer) {
+        const response = await openai.audio.speech.create({
+          model: "tts-1",
+          voice: "fable",
+          input: answer,
+        });
+
+        const reader = response?.body?.getReader();
+        if (reader) {
+          const stream = new ReadableStream({
+            start(controller) {
+              function push() {
+                reader.read().then(({ done, value }) => {
+                  if (done) {
+                    controller.close();
+                    return;
+                  }
+                  controller.enqueue(value);
+                  push();
+                });
+              }
+
+              push();
+            },
+          });
+
+          const audioBlob = await new Response(stream).blob();
+          const audioUrl = URL.createObjectURL(audioBlob);
+          const audio = new Audio(audioUrl);
+          audio.playbackRate = 1.1;
+          audio.play();
+        }
+      }
+    }
+
+    streamResponse();
+  }, [answer]);
+
   const handleTranscriptChange = (newTranscript: string) => {
     setTranscript(newTranscript);
   };
@@ -267,6 +308,12 @@ export default function Home() {
         onTranscriptChange={handleTranscriptChange}
         onSpeakingChange={handleSpeakingChange}
       />
+      <input
+        type="text"
+        value={transcript}
+        onChange={(e) => setTranscript(e.target.value)}
+      />
+      <button onClick={askChatGpt}>질문하기</button>
       <p style={{ marginTop: "20px" }}>응답: {answer}</p>
       <p>출발지: {departure}</p>
       <p>도착지: {destination}</p>
