@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@google-cloud/speech": "^6.5.0",
-    "axios": "^1.6.8",
+    "axios": "^1.7.4",
     "next": "14.2.3",
     "node-record-lpcm16": "^1.0.1",
     "openai": "^4.40.2",
